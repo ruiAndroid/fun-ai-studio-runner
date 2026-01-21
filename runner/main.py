@@ -1,11 +1,13 @@
 import time
 
+from runner.logging_setup import setup_logging
 from runner.deploy_client import claim_job, report_job
 from runner.runtime_client import deploy_app
 from runner.settings import POLL_SECONDS
 
 
 def main() -> None:
+    setup_logging("fun-ai-studio-runner")
     while True:
         try:
             job = claim_job()
