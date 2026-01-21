@@ -17,6 +17,16 @@ Runner（执行面）：从 Deploy 控制面领取 Job，执行构建/发布动�
 - `POLL_SECONDS=3`
 - `RUNTIME_AGENT_TOKEN=CHANGE_ME`
 
+## 配置文件（推荐：EnvironmentFile）
+
+- 仓库内提供：`config/runner.env`（你们当前选择在内网环境直接提交）
+- 部署时建议将其放到服务器：`/opt/fun-ai-studio/config/runner.env`
+
+systemd 方式加载（示例）：
+
+- 在 `fun-ai-studio-runner.service` 中加入：
+  - `EnvironmentFile=/opt/fun-ai-studio/config/runner.env`
+
 ## 启动
 
 ```bash
