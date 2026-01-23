@@ -1,9 +1,10 @@
 import requests
+from typing import Optional, Dict, Any
 
 from runner import settings
 
 
-def claim_job() -> dict | None:
+def claim_job() -> Optional[Dict[str, Any]]:
     url = settings.DEPLOY_BASE_URL.rstrip("/") + "/deploy/jobs/claim"
     body = {"runnerId": settings.RUNNER_ID, "leaseSeconds": settings.JOB_LEASE_SECONDS}
     r = requests.post(url, json=body, timeout=10)
@@ -14,7 +15,7 @@ def claim_job() -> dict | None:
     return data.get("data")
 
 
-def report_job(job_id: str, status: str, error_message: str | None = None) -> None:
+def report_job(job_id: str, status: str, error_message: Optional[str] = None) -> None:
     url = settings.DEPLOY_BASE_URL.rstrip("/") + f"/deploy/jobs/{job_id}/report"
     body = {"runnerId": settings.RUNNER_ID, "status": status}
     if error_message:
