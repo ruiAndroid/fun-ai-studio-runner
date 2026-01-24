@@ -25,6 +25,7 @@ def main() -> None:
             app_id = str(payload.get("appId") or "")
             agent_base_url = str(runtime_node.get("agentBaseUrl") or "")
             port = int(payload.get("containerPort") or 3000)
+            base_path = str(payload.get("basePath") or "").strip()
 
             # 1) 确定 image：优先使用 payload.image；否则从 Git build 并 push
             image = str(payload.get("image") or "")
@@ -49,7 +50,7 @@ def main() -> None:
             if not job_id or not app_id or not image or not agent_base_url:
                 raise RuntimeError(f"missing fields: jobId={job_id}, appId={app_id}, image={image}, agentBaseUrl={agent_base_url}")
 
-            deploy_app(agent_base_url, app_id, image, port)
+            deploy_app(agent_base_url, app_id, image, port, base_path=base_path)
             report_job(job_id, "SUCCEEDED")
         except Exception as e:
             # best effort: if we know job_id try report failed (not always available)
