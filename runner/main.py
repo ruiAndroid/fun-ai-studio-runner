@@ -33,7 +33,9 @@ def main() -> None:
                 repo_ssh_url = str(payload.get("repoSshUrl") or "")
                 git_ref = str(payload.get("gitRef") or "main")
 
-                if not settings.ACR_REGISTRY:
+                acr_registry = str(payload.get("acrRegistry") or settings.ACR_REGISTRY or "")
+                acr_namespace = str(payload.get("acrNamespace") or settings.ACR_NAMESPACE or "")
+                if not acr_registry:
                     raise RuntimeError("missing ACR_REGISTRY (required when payload.image not provided)")
 
                 work_root = settings.RUNNER_WORKDIR or "/tmp/funai-runner-workdir"
@@ -43,7 +45,7 @@ def main() -> None:
 
                 # image tag 策略：默认 latest；允许前端/控制面传入 imageTag 作为覆盖
                 image_tag = str(payload.get("imageTag") or "latest")
-                image = f"{settings.ACR_REGISTRY}/{settings.ACR_NAMESPACE}/u{payload.get('userId')}-app{app_id}:{image_tag}"
+                image = f"{acr_registry}/{acr_namespace}/u{payload.get('userId')}-app{app_id}:{image_tag}"
                 docker_build(image, work_dir)
                 docker_push(image)
 
