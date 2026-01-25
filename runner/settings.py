@@ -26,4 +26,8 @@ RUNNER_DOCKER_BIN = env("RUNNER_DOCKER_BIN", "docker")
 ACR_REGISTRY = env("ACR_REGISTRY", "")  # e.g. crpi-xxx.cn-hangzhou.personal.cr.aliyuncs.com
 ACR_NAMESPACE = env("ACR_NAMESPACE", "funaistudio")  # e.g. funaistudio
 
+# ACR Auth（可选）：配置后 Runner 会在 build/push 前自动 login（兼容 docker/podman）
+ACR_USERNAME = env("ACR_USERNAME", "")
+ACR_PASSWORD = env("ACR_PASSWORD", "")
+
 

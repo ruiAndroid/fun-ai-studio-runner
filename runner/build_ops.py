@@ -21,6 +21,40 @@ def _run(cmd: list, cwd: Optional[str] = None, timeout: int = 900) -> str:
     return p.stdout
 
 
+def docker_login(registry: str) -> None:
+    """
+    Best-effort login to registry.
+
+    - If ACR_USERNAME/ACR_PASSWORD are provided, do non-interactive login via --password-stdin.
+    - Otherwise, assume machine has been logged in once (docker/podman stores creds on disk) and do nothing.
+    """
+    if not registry:
+        return
+    user = (settings.ACR_USERNAME or "").strip()
+    pwd = (settings.ACR_PASSWORD or "").strip()
+    if not user or not pwd:
+        return
+
+    bin_ = settings.RUNNER_DOCKER_BIN or "docker"
+    # Use password-stdin to avoid leaking password in process args/logs.
+    p = subprocess.run(
+        [bin_, "login", registry, "-u", user, "--password-stdin"],
+        input=pwd + "\n",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if p.returncode != 0:
+        # Avoid printing password; include stdout for troubleshooting.
+        raise RuntimeError(
+            "ACR login failed. Please verify ACR_USERNAME/ACR_PASSWORD or login manually once on this machine.\n"
+            f"command failed ({p.returncode}): {bin_} login {registry} -u {user} --password-stdin\n"
+            f"{p.stdout}"
+        )
+
+
 def build_git_ssh_command() -> str:
     key = settings.GIT_SSH_KEY_PATH or ""
     kh = settings.GIT_KNOWN_HOSTS_PATH or ""
@@ -79,16 +113,20 @@ def git_clone(repo_ssh_url: str, git_ref: str, dest_dir: str) -> None:
             raise RuntimeError(f"git checkout {ref} failed: {p2.stdout}")
 
 
-def docker_build(image: str, context_dir: str) -> None:
+def docker_build(image: str, context_dir: str, registry: Optional[str] = None) -> None:
     if not image:
         raise RuntimeError("image tag is empty")
+    if registry:
+        docker_login(registry)
     bin_ = settings.RUNNER_DOCKER_BIN or "docker"
     _run([bin_, "build", "-t", image, context_dir], cwd=context_dir, timeout=1800)
 
 
-def docker_push(image: str) -> None:
+def docker_push(image: str, registry: Optional[str] = None) -> None:
     if not image:
         raise RuntimeError("image tag is empty")
+    if registry:
+        docker_login(registry)
     bin_ = settings.RUNNER_DOCKER_BIN or "docker"
     _run([bin_, "push", image], timeout=900)
 
