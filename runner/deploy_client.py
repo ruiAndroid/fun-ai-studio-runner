@@ -14,14 +14,22 @@ def claim_job() -> Optional[Dict[str, Any]]:
         raise RuntimeError(f"deploy claim failed: {data}")
     return data.get("data")
 
-def heartbeat_job(job_id: str, extend_seconds: int) -> None:
+def heartbeat_job(job_id: str,
+                  extend_seconds: int,
+                  phase: Optional[str] = None,
+                  phase_message: Optional[str] = None) -> Dict[str, Any]:
     url = settings.DEPLOY_BASE_URL.rstrip("/") + f"/deploy/jobs/{job_id}/heartbeat"
     body = {"runnerId": settings.RUNNER_ID, "extendSeconds": int(extend_seconds)}
+    if phase:
+        body["phase"] = str(phase)
+    if phase_message:
+        body["phaseMessage"] = str(phase_message)
     r = requests.post(url, json=body, timeout=10)
     r.raise_for_status()
     data = r.json()
     if data.get("code") != 200:
         raise RuntimeError(f"deploy heartbeat failed: {data}")
+    return data.get("data") or {}
 
 
 def report_job(job_id: str, status: str, error_message: Optional[str] = None) -> None:

@@ -53,7 +53,12 @@ def main() -> None:
                 interval = max(5, int(settings.JOB_LEASE_SECONDS / 2))
                 while not stop_hb.is_set():
                     try:
-                        heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS))
+                        data = heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS))
+                        status = str((data or {}).get("status") or "")
+                        # 控制面已判定非 RUNNING：停止续租线程（主流程可在下一步感知到并退出）
+                        if status and status != "RUNNING":
+                            stop_hb.set()
+                            return
                     except Exception as e:
                         # heartbeat 失败不应中断主流程（但可能导致 lease 过期被回收）
                         log.warning("heartbeat failed: jobId=%s err=%s", job_id, str(e))
@@ -76,6 +81,7 @@ def main() -> None:
                 work_root = settings.RUNNER_WORKDIR or "/tmp/funai-runner-workdir"
                 work_dir = os.path.join(work_root, f"app-{app_id}")
                 log.info("git clone: jobId=%s repo=%s ref=%s -> %s", job_id, repo_ssh_url, git_ref, work_dir)
+                heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS), phase="CLONE", phase_message=f"clone {git_ref}")
                 ensure_clean_dir(work_dir)
                 git_clone(repo_ssh_url, git_ref, work_dir)
 
@@ -83,8 +89,10 @@ def main() -> None:
                 image_tag = str(payload.get("imageTag") or "latest")
                 image = f"{acr_registry}/{acr_namespace}/u{payload.get('userId')}-app{app_id}:{image_tag}"
                 log.info("docker build: jobId=%s image=%s", job_id, image)
+                heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS), phase="BUILD", phase_message="docker build")
                 docker_build(image, work_dir)
                 log.info("docker push: jobId=%s image=%s", job_id, image)
+                heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS), phase="PUSH", phase_message="docker push")
                 docker_push(image)
             else:
                 log.info("use existing image from payload: jobId=%s image=%s", job_id, image)
@@ -93,6 +101,7 @@ def main() -> None:
                 raise RuntimeError(f"missing fields: jobId={job_id}, appId={app_id}, image={image}, agentBaseUrl={agent_base_url}")
 
             log.info("runtime deploy: jobId=%s appId=%s image=%s port=%s", job_id, app_id, image, port)
+            heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS), phase="DEPLOY", phase_message="runtime deploy")
             deploy_app(agent_base_url, app_id, image, port, base_path=base_path)
             log.info("report SUCCEEDED: jobId=%s", job_id)
             report_job(job_id, "SUCCEEDED")
