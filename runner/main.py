@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import logging
 
 from runner.logging_setup import setup_logging
 from runner.deploy_client import claim_job, report_job, heartbeat_job
@@ -11,6 +12,14 @@ from runner import settings
 
 def main() -> None:
     setup_logging("fun-ai-studio-runner")
+    log = logging.getLogger("runner.main")
+    log.info(
+        "runner started: runnerId=%s, deployBaseUrl=%s, pollSeconds=%s, leaseSeconds=%s",
+        settings.RUNNER_ID,
+        settings.DEPLOY_BASE_URL,
+        settings.POLL_SECONDS,
+        settings.JOB_LEASE_SECONDS,
+    )
     while True:
         try:
             job = claim_job()
@@ -27,6 +36,14 @@ def main() -> None:
             agent_base_url = str(runtime_node.get("agentBaseUrl") or "")
             port = int(payload.get("containerPort") or 3000)
             base_path = str(payload.get("basePath") or "").strip()
+            log.info(
+                "claimed job: jobId=%s, appId=%s, basePath=%s, port=%s, agentBaseUrl=%s",
+                job_id,
+                app_id,
+                base_path,
+                port,
+                agent_base_url,
+            )
 
             # 在执行期间定期 heartbeat 续租（避免 build/push 超过 leaseSeconds 导致任务卡死）
             stop_hb = threading.Event()
@@ -37,9 +54,9 @@ def main() -> None:
                 while not stop_hb.is_set():
                     try:
                         heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS))
-                    except Exception:
+                    except Exception as e:
                         # heartbeat 失败不应中断主流程（但可能导致 lease 过期被回收）
-                        pass
+                        log.warning("heartbeat failed: jobId=%s err=%s", job_id, str(e))
                     stop_hb.wait(interval)
 
             hb_t = threading.Thread(target=_hb_loop, name=f"hb-{job_id}", daemon=True)
@@ -58,22 +75,30 @@ def main() -> None:
 
                 work_root = settings.RUNNER_WORKDIR or "/tmp/funai-runner-workdir"
                 work_dir = os.path.join(work_root, f"app-{app_id}")
+                log.info("git clone: jobId=%s repo=%s ref=%s -> %s", job_id, repo_ssh_url, git_ref, work_dir)
                 ensure_clean_dir(work_dir)
                 git_clone(repo_ssh_url, git_ref, work_dir)
 
                 # image tag 策略：默认 latest；允许前端/控制面传入 imageTag 作为覆盖
                 image_tag = str(payload.get("imageTag") or "latest")
                 image = f"{acr_registry}/{acr_namespace}/u{payload.get('userId')}-app{app_id}:{image_tag}"
+                log.info("docker build: jobId=%s image=%s", job_id, image)
                 docker_build(image, work_dir)
+                log.info("docker push: jobId=%s image=%s", job_id, image)
                 docker_push(image)
+            else:
+                log.info("use existing image from payload: jobId=%s image=%s", job_id, image)
 
             if not job_id or not app_id or not image or not agent_base_url:
                 raise RuntimeError(f"missing fields: jobId={job_id}, appId={app_id}, image={image}, agentBaseUrl={agent_base_url}")
 
+            log.info("runtime deploy: jobId=%s appId=%s image=%s port=%s", job_id, app_id, image, port)
             deploy_app(agent_base_url, app_id, image, port, base_path=base_path)
+            log.info("report SUCCEEDED: jobId=%s", job_id)
             report_job(job_id, "SUCCEEDED")
             stop_hb.set()
         except Exception as e:
+            log.exception("job failed: err=%s", str(e))
             # best effort: if we know job_id try report failed (not always available)
             try:
                 if "job_id" in locals() and locals().get("job_id"):
