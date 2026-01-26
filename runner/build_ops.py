@@ -179,41 +179,115 @@ def acr_delete_image(image: str) -> None:
         if "/" not in image:
             log.warning("invalid image format for acr delete: %s", image)
             return
-        
+
         parts = image.split("/", 1)
         registry = parts[0]
         rest = parts[1]  # namespace/repo:tag
-        
+
         if ":" in rest:
             name, tag = rest.rsplit(":", 1)
         else:
             name, tag = rest, "latest"
-        
-        # 1. 获取 manifest digest
-        url = f"https://{registry}/v2/{name}/manifests/{tag}"
-        headers = {
-            "Accept": "application/vnd.docker.distribution.manifest.v2+json"
-        }
-        resp = requests.get(url, auth=(user, pwd), headers=headers, timeout=30)
+
+        accept = "application/vnd.docker.distribution.manifest.v2+json"
+
+        def _parse_bearer_challenge(www_auth: str) -> dict:
+            # Example:
+            # Bearer realm="https://xxx/token",service="registry",scope="repository:foo/bar:pull"
+            if not www_auth:
+                return {}
+            s = www_auth.strip()
+            if not s.lower().startswith("bearer "):
+                return {}
+            kv = s[len("Bearer ") :].strip()
+            out = {}
+            for part in kv.split(","):
+                part = part.strip()
+                if "=" not in part:
+                    continue
+                k, v = part.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip('"')
+                out[k] = v
+            return out
+
+        def _get_bearer_token(scope: str) -> str:
+            # Some registries require scope to be explicitly requested
+            ping = requests.get(f"https://{registry}/v2/", timeout=10)
+            ch = _parse_bearer_challenge(ping.headers.get("WWW-Authenticate", ""))
+            realm = ch.get("realm")
+            service = ch.get("service")
+            if not realm:
+                return ""
+            params = {}
+            if service:
+                params["service"] = service
+            if scope:
+                params["scope"] = scope
+            r = requests.get(realm, params=params, auth=(user, pwd), timeout=15)
+            if r.status_code != 200:
+                log.warning("acr token request failed: http=%s body=%s", r.status_code, (r.text or "")[:200])
+                return ""
+            try:
+                data = r.json()
+            except Exception:
+                return ""
+            return str(data.get("token") or data.get("access_token") or "")
+
+        def _request_with_token(method: str, url: str, scope: str, **kwargs):
+            # Try without token first; if 401 with Bearer challenge, fetch token and retry.
+            r0 = requests.request(method, url, timeout=30, **kwargs)
+            if r0.status_code != 401:
+                return r0
+            ch = _parse_bearer_challenge(r0.headers.get("WWW-Authenticate", ""))
+            need_scope = ch.get("scope") or scope
+            token = _get_bearer_token(need_scope)
+            if not token:
+                return r0
+            headers = dict((kwargs.get("headers") or {}))
+            headers["Authorization"] = f"Bearer {token}"
+            return requests.request(method, url, timeout=30, headers=headers, **{k: v for k, v in kwargs.items() if k != "headers"})
+
+        # 1) 获取 digest：优先 HEAD（更轻量），不行再 GET
+        manifest_url = f"https://{registry}/v2/{name}/manifests/{tag}"
+        headers = {"Accept": accept}
+        pull_scope = f"repository:{name}:pull"
+
+        resp = _request_with_token("HEAD", manifest_url, scope=pull_scope, headers=headers)
+        if resp.status_code == 404:
+            log.info("acr image not found (already deleted?): %s", image)
+            return
+        if resp.status_code == 401:
+            log.warning("acr unauthorized to read manifest (check ACR_USERNAME/ACR_PASSWORD): %s", image)
+            return
+        if resp.status_code not in (200, 201, 202):
+            # fallback to GET (some registries don't return digest for HEAD)
+            resp = _request_with_token("GET", manifest_url, scope=pull_scope, headers=headers)
         if resp.status_code == 404:
             log.info("acr image not found (already deleted?): %s", image)
             return
         if resp.status_code != 200:
-            log.warning("failed to get manifest for %s: %s %s", image, resp.status_code, resp.text[:200])
+            log.warning("failed to get manifest for %s: %s %s", image, resp.status_code, (resp.text or "")[:200])
             return
-        
+
         digest = resp.headers.get("Docker-Content-Digest")
         if not digest:
             log.warning("no digest in manifest response for %s", image)
             return
-        
-        # 2. 删除 manifest
+
+        # 2) DELETE manifest（需要 delete scope）
         delete_url = f"https://{registry}/v2/{name}/manifests/{digest}"
-        del_resp = requests.delete(delete_url, auth=(user, pwd), timeout=30)
+        delete_scope = f"repository:{name}:delete"
+        del_resp = _request_with_token("DELETE", delete_url, scope=delete_scope)
         if del_resp.status_code in (200, 202, 204):
             log.info("acr image deleted: %s (digest=%s)", image, digest[:20])
         else:
-            log.warning("failed to delete acr image %s: %s %s", image, del_resp.status_code, del_resp.text[:200])
+            log.warning(
+                "failed to delete acr image %s: %s %s",
+                image,
+                del_resp.status_code,
+                (del_resp.text or "")[:200],
+            )
     except Exception as e:
         log.warning("acr delete failed for %s: %s", image, e)
 
