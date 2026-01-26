@@ -1,9 +1,14 @@
+import logging
 import os
 import shutil
 import subprocess
 from typing import Optional
 
+import requests
+
 from runner import settings
+
+log = logging.getLogger("runner.build_ops")
 
 
 def _run(cmd: list, cwd: Optional[str] = None, timeout: int = 900) -> str:
@@ -129,5 +134,87 @@ def docker_push(image: str, registry: Optional[str] = None) -> None:
         docker_login(registry)
     bin_ = settings.RUNNER_DOCKER_BIN or "docker"
     _run([bin_, "push", image], timeout=900)
+
+
+def docker_rmi(image: str) -> None:
+    """删除本地镜像（best-effort，不抛异常）"""
+    if not image:
+        return
+    bin_ = settings.RUNNER_DOCKER_BIN or "docker"
+    try:
+        subprocess.run(
+            [bin_, "rmi", "-f", image],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        log.info("local image removed: %s", image)
+    except Exception as e:
+        log.warning("failed to remove local image %s: %s", image, e)
+
+
+def acr_delete_image(image: str) -> None:
+    """
+    删除 ACR 远程镜像（best-effort，不抛异常）。
+    
+    使用 Docker Registry V2 API：
+    1. 获取 manifest digest
+    2. DELETE /v2/{name}/manifests/{digest}
+    
+    需要配置 ACR_USERNAME / ACR_PASSWORD。
+    """
+    if not image:
+        return
+    user = (settings.ACR_USERNAME or "").strip()
+    pwd = (settings.ACR_PASSWORD or "").strip()
+    if not user or not pwd:
+        log.debug("skip acr delete: ACR_USERNAME/ACR_PASSWORD not configured")
+        return
+
+    # 解析 image: registry/namespace/repo:tag
+    # 例如: crpi-xxx.cn-hangzhou.personal.cr.aliyuncs.com/funaistudio/u1-app123:latest
+    try:
+        if "/" not in image:
+            log.warning("invalid image format for acr delete: %s", image)
+            return
+        
+        parts = image.split("/", 1)
+        registry = parts[0]
+        rest = parts[1]  # namespace/repo:tag
+        
+        if ":" in rest:
+            name, tag = rest.rsplit(":", 1)
+        else:
+            name, tag = rest, "latest"
+        
+        # 1. 获取 manifest digest
+        url = f"https://{registry}/v2/{name}/manifests/{tag}"
+        headers = {
+            "Accept": "application/vnd.docker.distribution.manifest.v2+json"
+        }
+        resp = requests.get(url, auth=(user, pwd), headers=headers, timeout=30)
+        if resp.status_code == 404:
+            log.info("acr image not found (already deleted?): %s", image)
+            return
+        if resp.status_code != 200:
+            log.warning("failed to get manifest for %s: %s %s", image, resp.status_code, resp.text[:200])
+            return
+        
+        digest = resp.headers.get("Docker-Content-Digest")
+        if not digest:
+            log.warning("no digest in manifest response for %s", image)
+            return
+        
+        # 2. 删除 manifest
+        delete_url = f"https://{registry}/v2/{name}/manifests/{digest}"
+        del_resp = requests.delete(delete_url, auth=(user, pwd), timeout=30)
+        if del_resp.status_code in (200, 202, 204):
+            log.info("acr image deleted: %s (digest=%s)", image, digest[:20])
+        else:
+            log.warning("failed to delete acr image %s: %s %s", image, del_resp.status_code, del_resp.text[:200])
+    except Exception as e:
+        log.warning("acr delete failed for %s: %s", image, e)
 
 

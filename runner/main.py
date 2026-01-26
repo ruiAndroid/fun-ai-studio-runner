@@ -5,7 +5,7 @@ import logging
 
 from runner.logging_setup import setup_logging
 from runner.deploy_client import claim_job, report_job, heartbeat_job
-from runner.build_ops import ensure_clean_dir, git_clone, docker_build, docker_push
+from runner.build_ops import ensure_clean_dir, git_clone, docker_build, docker_push, docker_rmi, acr_delete_image
 from runner.runtime_client import deploy_app
 from runner import settings
 
@@ -71,6 +71,7 @@ def main() -> None:
 
             # 1) 确定 image：优先使用 payload.image；否则从 Git build 并 push
             image = str(payload.get("image") or "")
+            built_image = False  # 标记是否为本次构建的镜像（用于后续清理）
             if not image:
                 repo_ssh_url = str(payload.get("repoSshUrl") or "")
                 git_ref = str(payload.get("gitRef") or "main")
@@ -99,6 +100,7 @@ def main() -> None:
                 with hb_lock:
                     heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS), phase="PUSH", phase_message="docker push")
                 docker_push(image, registry=acr_registry)
+                built_image = True  # 标记为本次构建
             else:
                 log.info("use existing image from payload: jobId=%s image=%s", job_id, image)
 
@@ -113,6 +115,18 @@ def main() -> None:
             log.info("report SUCCEEDED: jobId=%s", job_id)
             report_job(job_id, "SUCCEEDED")
             stop_hb.set()
+
+            # 清理镜像（仅清理本次构建的镜像，节省存储）
+            if built_image and image:
+                log.info("cleanup image: jobId=%s image=%s", job_id, image)
+                try:
+                    docker_rmi(image)  # 删除本地镜像
+                except Exception as e:
+                    log.warning("failed to remove local image: %s", e)
+                try:
+                    acr_delete_image(image)  # 删除 ACR 远程镜像
+                except Exception as e:
+                    log.warning("failed to delete acr image: %s", e)
         except Exception as e:
             log.exception("job failed: err=%s", str(e))
             # best effort: if we know job_id try report failed (not always available)
