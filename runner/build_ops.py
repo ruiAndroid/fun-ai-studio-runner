@@ -260,7 +260,10 @@ def acr_delete_image(image: str) -> None:
             if r0.status_code != 401:
                 return r0
             ch = _parse_bearer_challenge(r0.headers.get("WWW-Authenticate", ""))
-            need_scope = ch.get("scope") or scope
+            # IMPORTANT:
+            # - For DELETE, some registries return a challenge scope that doesn't include "delete".
+            # - We must request the desired scope explicitly (caller provides it).
+            need_scope = scope or ch.get("scope") or ""
             token = _get_bearer_token_from_challenge(ch, need_scope)
             if not token:
                 return r0
@@ -336,7 +339,8 @@ def acr_delete_image(image: str) -> None:
 
         # 2) DELETE manifest（需要 delete scope）
         delete_url = f"https://{registry}/v2/{name}/manifests/{digest}"
-        delete_scope = f"repository:{name}:delete"
+        # Some registries require push permission to delete; request a wider scope.
+        delete_scope = f"repository:{name}:pull,push,delete"
         del_resp = _request_with_token("DELETE", delete_url, scope=delete_scope)
         if del_resp.status_code in (200, 202, 204):
             log.info("acr image deleted: %s (digest=%s)", image, digest[:20])
