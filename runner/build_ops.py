@@ -211,14 +211,26 @@ def acr_delete_image(image: str) -> None:
                 out[k] = v
             return out
 
-        def _get_bearer_token(scope: str) -> str:
-            # Some registries require scope to be explicitly requested
-            ping = requests.get(f"https://{registry}/v2/", timeout=10)
-            ch = _parse_bearer_challenge(ping.headers.get("WWW-Authenticate", ""))
-            realm = ch.get("realm")
-            service = ch.get("service")
+        def _get_bearer_token_from_challenge(ch: dict, scope: str) -> str:
+            """
+            Use WWW-Authenticate challenge to fetch bearer token.
+            Some registries (incl. some ACR setups) only return challenge on manifest endpoints,
+            not on /v2/ ping, so we must rely on the challenge itself.
+            """
+            realm = (ch or {}).get("realm") or ""
+            service = (ch or {}).get("service") or ""
+            if not realm:
+                # fallback: try ping /v2/ to discover realm/service
+                try:
+                    ping = requests.get(f"https://{registry}/v2/", timeout=10)
+                    ch2 = _parse_bearer_challenge(ping.headers.get("WWW-Authenticate", ""))
+                    realm = realm or (ch2.get("realm") or "")
+                    service = service or (ch2.get("service") or "")
+                except Exception:
+                    pass
             if not realm:
                 return ""
+
             params = {}
             if service:
                 params["service"] = service
@@ -241,7 +253,7 @@ def acr_delete_image(image: str) -> None:
                 return r0
             ch = _parse_bearer_challenge(r0.headers.get("WWW-Authenticate", ""))
             need_scope = ch.get("scope") or scope
-            token = _get_bearer_token(need_scope)
+            token = _get_bearer_token_from_challenge(ch, need_scope)
             if not token:
                 return r0
             headers = dict((kwargs.get("headers") or {}))
