@@ -267,8 +267,8 @@ def acr_delete_image(image: str) -> None:
 
         resp = _request_with_token("HEAD", manifest_url, scope=pull_scope, headers=headers)
         if resp.status_code == 404:
-            log.info("acr image not found (already deleted?): %s", image)
-            return
+            # Some registries return 404 for HEAD on manifests; verify via GET before concluding not-found.
+            resp = _request_with_token("GET", manifest_url, scope=pull_scope, headers=headers)
         if resp.status_code == 401:
             log.warning("acr unauthorized to read manifest (check ACR_USERNAME/ACR_PASSWORD): %s", image)
             return
