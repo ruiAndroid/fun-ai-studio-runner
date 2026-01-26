@@ -28,13 +28,14 @@ def docker_login(registry: str) -> None:
     """
     Best-effort login to registry.
 
-    - If ACR_USERNAME/ACR_PASSWORD are provided, do non-interactive login via --password-stdin.
+    - If REGISTRY_USERNAME/REGISTRY_PASSWORD (or legacy ACR_USERNAME/ACR_PASSWORD) are provided,
+      do non-interactive login via --password-stdin.
     - Otherwise, assume machine has been logged in once (docker/podman stores creds on disk) and do nothing.
     """
     if not registry:
         return
-    user = (settings.ACR_USERNAME or "").strip()
-    pwd = (settings.ACR_PASSWORD or "").strip()
+    user = (getattr(settings, "REGISTRY_USERNAME", "") or "").strip()
+    pwd = (getattr(settings, "REGISTRY_PASSWORD", "") or "").strip()
     if not user or not pwd:
         return
 
@@ -52,7 +53,8 @@ def docker_login(registry: str) -> None:
     if p.returncode != 0:
         # Avoid printing password; include stdout for troubleshooting.
         raise RuntimeError(
-            "ACR login failed. Please verify ACR_USERNAME/ACR_PASSWORD or login manually once on this machine.\n"
+            "Registry login failed. Please verify REGISTRY_USERNAME/REGISTRY_PASSWORD (or legacy ACR_USERNAME/ACR_PASSWORD) "
+            "or login manually once on this machine.\n"
             f"command failed ({p.returncode}): {bin_} login {registry} -u {user} --password-stdin\n"
             f"{p.stdout}"
         )
