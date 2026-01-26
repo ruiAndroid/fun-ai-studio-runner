@@ -190,6 +190,14 @@ def acr_delete_image(image: str) -> None:
             name, tag = rest, "latest"
 
         accept = "application/vnd.docker.distribution.manifest.v2+json"
+        accept_fallbacks = [
+            "application/vnd.docker.distribution.manifest.v2+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.v1+json",
+            "*/*",
+        ]
 
         def _parse_bearer_challenge(www_auth: str) -> dict:
             # Example:
@@ -260,6 +268,41 @@ def acr_delete_image(image: str) -> None:
             headers["Authorization"] = f"Bearer {token}"
             return requests.request(method, url, timeout=30, headers=headers, **{k: v for k, v in kwargs.items() if k != "headers"})
 
+        def _repo_tags_exist(tag_to_check: str) -> bool:
+            tags_url = f"https://{registry}/v2/{name}/tags/list"
+            pull_scope2 = f"repository:{name}:pull"
+            r = _request_with_token("GET", tags_url, scope=pull_scope2)
+            if r.status_code == 401:
+                log.warning("acr unauthorized to list tags (check ACR_USERNAME/ACR_PASSWORD): %s/%s", name, tag_to_check)
+                return False
+            if r.status_code == 404:
+                return False
+            if r.status_code != 200:
+                log.debug("acr tags/list unexpected: http=%s body=%s", r.status_code, (r.text or "")[:200])
+                return False
+            try:
+                data = r.json() or {}
+                tags = data.get("tags") or []
+                return str(tag_to_check) in set([str(t) for t in tags])
+            except Exception:
+                return False
+
+        def _get_manifest_any(tag_to_fetch: str):
+            manifest_url2 = f"https://{registry}/v2/{name}/manifests/{tag_to_fetch}"
+            pull_scope2 = f"repository:{name}:pull"
+            last = None
+            for a in accept_fallbacks:
+                headers2 = {"Accept": a} if a else {}
+                # Prefer GET here for maximum compatibility (some registries 404 on HEAD)
+                r = _request_with_token("GET", manifest_url2, scope=pull_scope2, headers=headers2)
+                last = r
+                if r.status_code == 200:
+                    return r
+                # 401 should have been handled by _request_with_token retry; treat as terminal
+                if r.status_code == 401:
+                    return r
+            return last
+
         # 1) 获取 digest：优先 HEAD（更轻量），不行再 GET
         manifest_url = f"https://{registry}/v2/{name}/manifests/{tag}"
         headers = {"Accept": accept}
@@ -273,10 +316,14 @@ def acr_delete_image(image: str) -> None:
             log.warning("acr unauthorized to read manifest (check ACR_USERNAME/ACR_PASSWORD): %s", image)
             return
         if resp.status_code not in (200, 201, 202):
-            # fallback to GET (some registries don't return digest for HEAD)
-            resp = _request_with_token("GET", manifest_url, scope=pull_scope, headers=headers)
+            # fallback to GET with multiple Accept types (some registries require schema1/OCI/manifest-list)
+            resp = _get_manifest_any(tag)
         if resp.status_code == 404:
-            log.info("acr image not found (already deleted?): %s", image)
+            # Double-check via tags/list: if tags exist but manifest still 404, likely Accept mismatch or registry behavior.
+            if _repo_tags_exist(tag):
+                log.warning("acr tag exists but manifest not found (accept mismatch?): %s", image)
+            else:
+                log.info("acr image not found (already deleted?): %s", image)
             return
         if resp.status_code != 200:
             log.warning("failed to get manifest for %s: %s %s", image, resp.status_code, (resp.text or "")[:200])
