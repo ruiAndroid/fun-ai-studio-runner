@@ -105,10 +105,11 @@ def main() -> None:
             if not job_id or not app_id or not image or not agent_base_url:
                 raise RuntimeError(f"missing fields: jobId={job_id}, appId={app_id}, image={image}, agentBaseUrl={agent_base_url}")
 
-            log.info("runtime deploy: jobId=%s appId=%s image=%s port=%s", job_id, app_id, image, port)
+            user_id = str(payload.get("userId") or "")
+            log.info("runtime deploy: jobId=%s userId=%s appId=%s image=%s port=%s", job_id, user_id, app_id, image, port)
             with hb_lock:
                 heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS), phase="DEPLOY", phase_message="runtime deploy")
-            deploy_app(agent_base_url, app_id, image, port, base_path=base_path)
+            deploy_app(agent_base_url, user_id, app_id, image, port, base_path=base_path)
             log.info("report SUCCEEDED: jobId=%s", job_id)
             report_job(job_id, "SUCCEEDED")
             stop_hb.set()
