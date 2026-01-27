@@ -5,7 +5,7 @@ import logging
 
 from runner.logging_setup import setup_logging
 from runner.deploy_client import claim_job, report_job, heartbeat_job
-from runner.build_ops import ensure_clean_dir, git_clone, docker_build, docker_push, docker_rmi
+from runner.build_ops import ensure_clean_dir, git_clone, docker_build, docker_push, docker_rmi, docker_prune_dangling
 from runner.runtime_client import deploy_app
 from runner import settings
 
@@ -123,6 +123,11 @@ def main() -> None:
                     docker_rmi(image)  # 删除本地镜像
                 except Exception as e:
                     log.warning("failed to remove local image: %s", e)
+                # 清理 dangling layers（best-effort）
+                try:
+                    docker_prune_dangling()
+                except Exception as e:
+                    log.warning("failed to prune dangling images: %s", e)
         except Exception as e:
             log.exception("job failed: err=%s", str(e))
             # best effort: if we know job_id try report failed (not always available)

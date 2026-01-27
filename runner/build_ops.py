@@ -155,3 +155,23 @@ def docker_rmi(image: str) -> None:
         log.warning("failed to remove local image %s: %s", image, e)
 
 
+def docker_prune_dangling() -> None:
+    """清理 dangling images（best-effort，不抛异常）"""
+    bin_ = settings.RUNNER_DOCKER_BIN or "docker"
+    try:
+        p = subprocess.run(
+            [bin_, "image", "prune", "-f"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if p.returncode == 0:
+            log.info("dangling images pruned")
+        else:
+            log.warning("image prune returned non-zero: %s", p.stdout)
+    except Exception as e:
+        log.warning("failed to prune dangling images: %s", e)
+
+
