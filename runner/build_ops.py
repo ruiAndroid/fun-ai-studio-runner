@@ -124,7 +124,11 @@ def docker_build(image: str, context_dir: str, registry: Optional[str] = None) -
     if registry:
         docker_login(registry)
     bin_ = settings.RUNNER_DOCKER_BIN or "docker"
-    _run([bin_, "build", "-t", image, context_dir], cwd=context_dir, timeout=1800)
+    cmd = [bin_, "build"]
+    if getattr(settings, "RUNNER_DOCKER_BUILD_PULL", True):
+        cmd.append("--pull")
+    cmd += ["-t", image, context_dir]
+    _run(cmd, cwd=context_dir, timeout=1800)
 
 
 def docker_push(image: str, registry: Optional[str] = None) -> None:

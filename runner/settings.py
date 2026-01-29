@@ -23,6 +23,10 @@ GIT_KNOWN_HOSTS_PATH = env("GIT_KNOWN_HOSTS_PATH", "/opt/fun-ai-studio/keys/gite
 # Build & Push
 RUNNER_WORKDIR = env("RUNNER_WORKDIR", "/data/funai/runner/workdir")
 RUNNER_DOCKER_BIN = env("RUNNER_DOCKER_BIN", "docker")
+# Build 时是否强制拉取最新基础镜像（避免 Harbor 侧 latest 已更新但本机仍用旧 cache）
+# - docker/podman 都支持 --pull
+# - 默认 true：更稳定；如果你极度追求速度可设为 false
+RUNNER_DOCKER_BUILD_PULL = env("RUNNER_DOCKER_BUILD_PULL", "true").lower() != "false"
 ACR_REGISTRY = env("ACR_REGISTRY", "")  # e.g. crpi-xxx.cn-hangzhou.personal.cr.aliyuncs.com
 ACR_NAMESPACE = env("ACR_NAMESPACE", "funaistudio")  # e.g. funaistudio
 
