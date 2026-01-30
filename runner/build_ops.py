@@ -127,6 +127,11 @@ def docker_build(image: str, context_dir: str, registry: Optional[str] = None) -
     cmd = [bin_, "build"]
     if getattr(settings, "RUNNER_DOCKER_BUILD_PULL", True):
         cmd.append("--pull")
+    
+    # 传递 NPM_REGISTRY 作为 build-arg（用于加速 npm install）
+    npm_registry = getattr(settings, "NPM_REGISTRY", "https://registry.npmjs.org")
+    cmd += ["--build-arg", f"NPM_REGISTRY={npm_registry}"]
+    
     cmd += ["-t", image, context_dir]
     _run(cmd, cwd=context_dir, timeout=1800)
 

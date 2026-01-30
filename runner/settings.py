@@ -39,4 +39,9 @@ ACR_PASSWORD = env("ACR_PASSWORD", "")
 REGISTRY_USERNAME = env("REGISTRY_USERNAME", "") or ACR_USERNAME
 REGISTRY_PASSWORD = env("REGISTRY_PASSWORD", "") or ACR_PASSWORD
 
+# NPM Registry（用于构建时加速 npm install）
+# - 推荐配置为 Verdaccio 地址：http://172.21.138.103:4873
+# - 会通过 --build-arg 传递给 Dockerfile
+NPM_REGISTRY = env("NPM_REGISTRY", "https://registry.npmjs.org")
+
 
