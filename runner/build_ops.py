@@ -118,7 +118,7 @@ def git_clone(repo_ssh_url: str, git_ref: str, dest_dir: str) -> None:
             raise RuntimeError(f"git checkout {ref} failed: {p2.stdout}")
 
 
-def docker_build(image: str, context_dir: str, registry: Optional[str] = None) -> None:
+def docker_build(image: str, context_dir: str, registry: Optional[str] = None, base_path: Optional[str] = None) -> None:
     if not image:
         raise RuntimeError("image tag is empty")
     if registry:
@@ -132,6 +132,12 @@ def docker_build(image: str, context_dir: str, registry: Optional[str] = None) -
     npm_registry = getattr(settings, "NPM_REGISTRY", "https://registry.npmjs.org")
     cmd += ["--build-arg", f"NPM_REGISTRY={npm_registry}"]
     
+    if base_path:
+        bp = base_path.strip()
+        if not bp.startswith("/"):
+            bp = "/" + bp
+        cmd += ["--build-arg", f"BASE_PATH={bp}"]
+
     cmd += ["-t", image, context_dir]
     _run(cmd, cwd=context_dir, timeout=1800)
 
