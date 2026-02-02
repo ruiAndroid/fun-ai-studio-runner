@@ -95,7 +95,7 @@ def main() -> None:
                 log.info("docker build: jobId=%s image=%s", job_id, image)
                 with hb_lock:
                     heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS), phase="BUILD", phase_message="docker build")
-                docker_build(image, work_dir, registry=acr_registry, base_path=base_path)
+                docker_build(image, work_dir, registry=acr_registry)
                 log.info("docker push: jobId=%s image=%s", job_id, image)
                 with hb_lock:
                     heartbeat_job(str(job_id), int(settings.JOB_LEASE_SECONDS), phase="PUSH", phase_message="docker push")
