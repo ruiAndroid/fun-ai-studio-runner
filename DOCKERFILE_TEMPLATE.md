@@ -32,8 +32,10 @@ RUN npm ci 2>/dev/null || npm install
 # 复制源代码
 COPY . .
 
-# 构建（如果有 build 脚本）
-RUN npm run build 2>/dev/null || echo "No build script, skipping..."
+# 构建：
+# - 若存在 scripts.build：执行 npm run build（失败应让 docker build 失败，避免“构建失败但部署成功”）
+# - 若不存在 build 脚本：跳过
+RUN if node -e "const p=require('./package.json');const s=(p&&p.scripts)||{};process.exit(s.build?0:1)"; then npm run build; else echo "No build script, skipping..."; fi
 
 # 暴露端口
 EXPOSE 3000
