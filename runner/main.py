@@ -3,6 +3,8 @@ import time
 import threading
 import logging
 
+import requests
+
 from runner.logging_setup import setup_logging
 from runner.deploy_client import claim_job, report_job, heartbeat_job
 from runner.build_ops import ensure_clean_dir, git_clone, docker_build, docker_push, docker_rmi, docker_prune_dangling
@@ -13,6 +15,9 @@ from runner import settings
 def main() -> None:
     setup_logging("fun-ai-studio-runner")
     log = logging.getLogger("runner.main")
+    # When deploy control-plane is restarting/unreachable, avoid hammering & stacktrace spam.
+    # Reset to 0 on any successful claim request (even if no job returned).
+    claim_failures = 0
     log.info(
         "runner started: runnerId=%s, deployBaseUrl=%s, pollSeconds=%s, leaseSeconds=%s",
         settings.RUNNER_ID,
@@ -22,7 +27,22 @@ def main() -> None:
     )
     while True:
         try:
-            job = claim_job()
+            try:
+                job = claim_job()
+                claim_failures = 0
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                claim_failures += 1
+                # Exponential backoff up to 30s (but never less than POLL_SECONDS)
+                backoff = min(30.0, max(settings.POLL_SECONDS, (2.0 ** min(claim_failures, 6))))
+                log.warning(
+                    "deploy control-plane unreachable, will retry: deployBaseUrl=%s err=%s backoff=%.1fs failures=%s",
+                    settings.DEPLOY_BASE_URL,
+                    str(e),
+                    backoff,
+                    claim_failures,
+                )
+                time.sleep(backoff)
+                continue
             if not job:
                 time.sleep(settings.POLL_SECONDS)
                 continue
